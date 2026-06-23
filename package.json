@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "deploy": "node deploy-commands.js"
+    "deploy": "node deploy-commands.js",
+    "dev": "node watch.js"
   },
   "dependencies": {
     "@discordjs/rest": "^1.5.1",

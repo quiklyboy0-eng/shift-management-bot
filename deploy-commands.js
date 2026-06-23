@@ -47,9 +47,50 @@ const shiftCommand = new SlashCommandBuilder()
       .addIntegerOption(option =>
         option.setName('wave')
           .setDescription('Wave number to view (default = current wave)')
+          .setRequired(false)))
+  .addSubcommand(subcommand =>
+    subcommand
+      .setName('remove')
+      .setDescription('Remove a user\'s active or completed shift.')
+      .addUserOption(option =>
+        option.setName('user')
+          .setDescription('The user whose shift should be removed.')
+          .setRequired(true))
+      .addIntegerOption(option =>
+        option.setName('shift')
+          .setDescription('The completed shift number to remove from history (1 = first completed shift).')
           .setRequired(false)));
 
-const commands = [shiftCommand].map(command => command.toJSON());
+const quotaCommand = new SlashCommandBuilder()
+  .setName('quota')
+  .setDescription('Quota management commands')
+  .addSubcommand(subcommand =>
+    subcommand
+      .setName('end')
+      .setDescription('End the current quota wave early and start a new one.'));
+
+const commands = [shiftCommand, quotaCommand].map(command => command.toJSON());
+
+async function cleanupGlobalCommands(resolvedClientId) {
+  try {
+    const globalCommands = await rest.get(Routes.applicationCommands(resolvedClientId));
+    const duplicateGlobalCommands = globalCommands.filter(cmd => commands.some(c => c.name === cmd.name));
+
+    if (!duplicateGlobalCommands.length) {
+      console.log('No duplicate global commands found to remove.');
+      return;
+    }
+
+    for (const cmd of duplicateGlobalCommands) {
+      console.log(`Removing duplicate global command ${cmd.name} (${cmd.id})...`);
+      await rest.delete(Routes.applicationCommand(resolvedClientId, cmd.id));
+    }
+
+    console.log('Duplicate global commands cleaned up.');
+  } catch (error) {
+    console.warn('Failed to clean up global commands:', error);
+  }
+}
 
 (async () => {
   try {
@@ -61,23 +102,14 @@ const commands = [shiftCommand].map(command => command.toJSON());
 
     if (guildId) {
       console.log(`Registering commands to guild ${guildId}...`);
-      try {
-        await rest.put(
-          Routes.applicationGuildCommands(resolvedClientId, guildId),
-          { body: commands }
-        );
-        console.log('Guild commands registered successfully.');
-      } catch (error) {
-        if (error?.status === 403 || error?.status === 404 || error?.code === 50001) {
-          console.warn('Missing access to guild commands. Falling back to global registration.');
-          await rest.put(
-            Routes.applicationCommands(resolvedClientId),
-            { body: commands }
-          );
-          console.log('Global commands registered successfully.');
-        } else {
-          throw error;
-        }
+      await rest.put(
+        Routes.applicationGuildCommands(resolvedClientId, guildId),
+        { body: commands }
+      );
+      console.log('Guild commands registered successfully.');
+
+      if (process.env.CLEAN_GLOBAL === 'true') {
+        await cleanupGlobalCommands(resolvedClientId);
       }
     } else {
       console.log('Registering global commands...');
@@ -89,5 +121,6 @@ const commands = [shiftCommand].map(command => command.toJSON());
     }
   } catch (error) {
     console.error('Failed to register commands:', error);
+    process.exit(1);
   }
 })();
