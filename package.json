@@ -1,0 +1,17 @@
+{
+  "name": "shift-management-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^1.5.1",
+    "discord-api-types": "^0.38.48",
+    "discord.js": "^14.15.0",
+    "dotenv": "^16.3.1",
+    "fs-extra": "^11.1.1"
+  }
+}
