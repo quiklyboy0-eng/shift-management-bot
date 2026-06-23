@@ -57,6 +57,8 @@ const DEPARTMENTS = {
   },
 };
 
+const STAFF_OVERRIDE_ROLE = '1519072293861593219';
+
 const QUOTA_HOURS = 6;
 const WAVE_LENGTH_DAYS = 14;
 const QUOTA_RESET_MS = WAVE_LENGTH_DAYS * 24 * 60 * 60 * 1000;
@@ -124,6 +126,11 @@ function isOnShift(userData) {
 }
 
 function getAvailableDepartments(member) {
+  const hasOverride = Boolean(member?.roles?.cache?.has(STAFF_OVERRIDE_ROLE));
+  if (hasOverride) {
+    return Object.entries(DEPARTMENTS);
+  }
+
   return Object.entries(DEPARTMENTS).filter(([, dept]) => {
     try {
       return Boolean(member?.roles?.cache?.has(dept.roleId));
