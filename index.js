@@ -124,7 +124,13 @@ function isOnShift(userData) {
 }
 
 function getAvailableDepartments(member) {
-  return Object.entries(DEPARTMENTS).filter(([, dept]) => member.roles.cache.has(dept.roleId));
+  return Object.entries(DEPARTMENTS).filter(([, dept]) => {
+    try {
+      return Boolean(member?.roles?.cache?.has(dept.roleId));
+    } catch (e) {
+      return false;
+    }
+  });
 }
 
 function buildDashboardEmbed(member, userData, availableDepts) {
