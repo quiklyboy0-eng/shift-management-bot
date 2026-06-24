@@ -205,15 +205,24 @@ function buildDashboardEmbed(member, userData, availableDepts) {
   const totalShifts = userData.completedShifts || 0;
   const totalWorkedMs = userData.totalShiftTime || 0;
   const totalBreakMs = userData.totalBreakTime || 0;
-  const lastShift = userData.history?.slice(-1)[0];
   const currentWaveStart = getCurrentWaveStart();
   const currentWave = getWaveNumber();
   const waveKey = String(currentWave);
   const waveHours = userData.waveHours?.[waveKey] || 0;
+  const currentWaveHistory = (userData.history || []).filter(record => String(record.waveNumber || getWaveNumber(record.startedAt)) === waveKey);
+  const currentWaveShifts = currentWaveHistory.length;
+  const currentWaveWorkedMs = currentWaveHistory.reduce((sum, record) => sum + (record.shiftDuration || 0), 0);
+  const currentWaveBreakMs = currentWaveHistory.reduce((sum, record) => sum + (record.breakDuration || 0), 0);
   const quotaMs = QUOTA_HOURS * 60 * 60000;
 
-  const progressBar = buildVisualBar(waveHours, quotaMs);
-  const progressValue = `${formatDuration(waveHours)} / ${QUOTA_HOURS}h`;
+  let activeShiftHours = 0;
+  if (userData.activeShift && getWaveNumber(userData.activeShift.startedAt) === currentWave) {
+    activeShiftHours = Date.now() - userData.activeShift.startedAt;
+  }
+
+  const displayWaveHours = waveHours + activeShiftHours;
+  const progressBar = buildVisualBar(displayWaveHours, quotaMs);
+  const progressValue = `${formatDuration(displayWaveHours)} / ${QUOTA_HOURS}h`;
 
   const activeShift = userData.activeShift;
   const activeShiftInfo = activeShift
@@ -233,13 +242,13 @@ Select a shift type, track your hours, and keep quota progress visible in real t
     .setColor(availableDepts.length ? availableDepts[0][1].color : Colors.Blurple)
     .setDescription(description)
     .addFields(
-      { name: '📊 Total Shifts Completed', value: `${totalShifts}`, inline: true },
-      { name: '⏱️ Total Shift Time', value: `${formatDuration(totalWorkedMs)}`, inline: true },
-      { name: '☕ Total Break Time', value: `${formatDuration(totalBreakMs)}`, inline: true },
+      { name: '📊 Current Wave Shifts', value: `${currentWaveShifts}`, inline: true },
+      { name: '⏱️ Current Wave Time', value: `${formatDuration(currentWaveWorkedMs + activeShiftHours)}`, inline: true },
+      { name: '☕ Current Wave Break', value: `${formatDuration(currentWaveBreakMs)}`, inline: true },
       {
         name: '📈 Quota Progress',
         value: `${progressBar}
-${progressValue} ${quotaStatusIcon(waveHours)}`,
+${progressValue} ${quotaStatusIcon(displayWaveHours)}`,
         inline: false,
       },
       {
@@ -251,26 +260,40 @@ ${progressValue} ${quotaStatusIcon(waveHours)}`,
     .setFooter({ text: 'Quota resets every 2 weeks.' });
 }
 
-function buildOnlineEmbed(onlineUsers) {
+function buildOnlineEmbed(onlineUsers, departmentLabel = 'All Departments') {
+  const onDuty = onlineUsers.filter(user => !user.onBreak);
+  const onBreak = onlineUsers.filter(user => user.onBreak);
+
   const embed = new EmbedBuilder()
-    .setTitle('Live Shift Roster')
-    .setDescription('Currently active shift sessions across departments.')
+    .setTitle(`Live Shift Roster — ${departmentLabel}`)
+    .setDescription('Currently active shift sessions for the selected department.')
     .setColor(0x2F3136)
     .setFooter({ text: 'Automatically updates when users start or end shifts.' });
 
   if (!onlineUsers.length) {
-    embed.addFields({ name: 'No active shifts', value: 'No members are on shift right now.', inline: false });
+    embed.addFields({ name: 'No active shifts', value: 'No members are on shift right now for this department.', inline: false });
     return embed;
   }
 
-  const fields = onlineUsers.map(item => ({
-    name: `${item.department.emoji} ${item.department.label}`,
-    value: `${item.member} • <t:${Math.floor(item.startedAt / 1000)}:R>
-**Duration:** ${formatDuration(Date.now() - item.startedAt)} ${item.onBreak ? '\n**Status:** On Break' : ''}`,
-    inline: false,
-  }));
+  const formatUser = item => `${item.member} • <t:${Math.floor(item.startedAt / 1000)}:R>
+**Duration:** ${formatDuration(Date.now() - item.startedAt)}`;
 
-  embed.addFields(fields);
+  if (onDuty.length) {
+    embed.addFields({
+      name: '🟢 On Duty',
+      value: onDuty.map(formatUser).join('\n\n'),
+      inline: false,
+    });
+  }
+
+  if (onBreak.length) {
+    embed.addFields({
+      name: '☕ On Break',
+      value: onBreak.map(formatUser).join('\n\n'),
+      inline: false,
+    });
+  }
+
   return embed;
 }
 
@@ -736,17 +759,22 @@ client.on('interactionCreate', async interaction => {
           break;
         }
         case 'online': {
-          const onlineUsers = Object.entries(data.users)
-            .filter(([, userData]) => userData.activeShift)
-            .map(([userId, userData]) => ({
-              member: `<@${userId}>`,
-              department: DEPARTMENTS[userData.activeShift.department],
-              startedAt: userData.activeShift.startedAt,
-              onBreak: Boolean(userData.activeShift.onBreak),
-            }));
+          const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('online_select')
+            .setMinValues(1)
+            .setMaxValues(1)
+            .setPlaceholder('Choose an online roster to view')
+            .addOptions([
+              { label: 'All Departments', value: 'ALL', description: 'Show all active shifts', emoji: '🌐' },
+              ...availableDepts.map(([key, dept]) => ({
+                label: dept.label,
+                value: key,
+                description: `Show ${dept.label} active shifts`,
+                emoji: dept.emoji,
+              }))
+            ]);
 
-          const onlineEmbed = buildOnlineEmbed(onlineUsers);
-          await interaction.reply({ embeds: [onlineEmbed], ephemeral: false });
+          await interaction.reply({ content: 'Select a department roster to view online users:', components: [new ActionRowBuilder().addComponents(selectMenu)], ephemeral: true });
           break;
         }
         case 'leaderboard': {
@@ -1199,6 +1227,26 @@ client.on('interactionCreate', async interaction => {
         }
 
         return;
+      }
+
+      if (interaction.customId === 'online_select') {
+        const selected = interaction.values[0];
+        const data = await loadData();
+
+        const onlineUsers = Object.entries(data.users)
+          .filter(([, userData]) => userData.activeShift)
+          .map(([userId, userData]) => ({
+            member: `<@${userId}>`,
+            departmentKey: userData.activeShift.department,
+            department: DEPARTMENTS[userData.activeShift.department],
+            startedAt: userData.activeShift.startedAt,
+            onBreak: Boolean(userData.activeShift.onBreak),
+          }))
+          .filter(item => selected === 'ALL' || item.departmentKey === selected);
+
+        const departmentLabel = selected === 'ALL' ? 'All Departments' : DEPARTMENTS[selected]?.label || 'Unknown Department';
+        const onlineEmbed = buildOnlineEmbed(onlineUsers, departmentLabel);
+        return interaction.reply({ embeds: [onlineEmbed], ephemeral: false });
       }
 
       if (interaction.customId.startsWith('leaderboard_select_')) {
